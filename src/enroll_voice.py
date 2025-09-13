@@ -93,7 +93,11 @@ def enroll(person, wav_paths, out_json="voiceprints.json"):
 
     # store as a list of vectors rather than a single mean
     existing = db.get(person, [])
-    if isinstance(existing, list) and existing and isinstance(existing[0], (list, tuple)):
+    if (
+        isinstance(existing, list)
+        and existing
+        and isinstance(existing[0], (list, tuple))
+    ):
         existing_vecs = existing
     elif isinstance(existing, list) and existing:
         # was a single vector before; convert to list of vectors
@@ -105,7 +109,9 @@ def enroll(person, wav_paths, out_json="voiceprints.json"):
     db[person] = existing_vecs
 
     Path(out_json).write_text(json.dumps(db, indent=2))
-    print(f"Enrolled {person} with {len(wav_paths)} new clips; total templates now {len(existing_vecs)}.")
+    print(
+        f"Enrolled {person} with {len(wav_paths)} new clips; total templates now {len(existing_vecs)}."
+    )
 
 
 # enroll("Hilla", ["voice_lib/hilla1.wav", "voice_lib/hilla2.wav", "voice_lib/hilla3.wav"])

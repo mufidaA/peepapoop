@@ -3,6 +3,7 @@ from pathlib import Path
 import torchaudio
 
 from src.enroll_voice import wav_to_embedding
+from src.config import logger
 
 
 def _to_unit_vec(x, eps=1e-9):
@@ -17,9 +18,9 @@ def _to_unit_vec(x, eps=1e-9):
 def who_is_speaking(
     wav_path,
     db_json="voiceprints.json",
-    threshold=0.35,           # start a bit lower; calibrate later
-    strategy="max",           # "max" (default) | "mean" | "avgref"
-    top_k=3
+    threshold=0.35,  # start a bit lower; calibrate later
+    strategy="max",  # "max" (default) | "mean" | "avgref"
+    top_k=3,
 ):
     """
     Identify the most similar enrolled speaker or 'unknown' if below threshold.
@@ -35,30 +36,50 @@ def who_is_speaking(
     # Load DB
     p = Path(db_json)
     if not p.exists():
-        return {"speaker_id": "unknown", "confidence": 0.0, "error": f"DB '{db_json}' not found"}
+        return {
+            "speaker_id": "unknown",
+            "confidence": 0.0,
+            "error": f"DB '{db_json}' not found",
+        }
 
     try:
         db = json.loads(p.read_text())
     except Exception as e:
-        return {"speaker_id": "unknown", "confidence": 0.0, "error": f"Failed to read DB: {e}"}
+        return {
+            "speaker_id": "unknown",
+            "confidence": 0.0,
+            "error": f"Failed to read DB: {e}",
+        }
 
     # Probe embedding
     probe = _to_unit_vec(wav_to_embedding(wav_path))
     if probe is None or not np.all(np.isfinite(probe)):
-        return {"speaker_id": "unknown", "confidence": 0.0, "error": "Invalid probe embedding"}
+        return {
+            "speaker_id": "unknown",
+            "confidence": 0.0,
+            "error": "Invalid probe embedding",
+        }
 
     candidates = []
 
     for person, ref in db.items():
         # Normalize DB into a list of vectors
-        if isinstance(ref, list) and len(ref) > 0 and isinstance(ref[0], (list, tuple, np.ndarray)):
+        if (
+            isinstance(ref, list)
+            and len(ref) > 0
+            and isinstance(ref[0], (list, tuple, np.ndarray))
+        ):
             # multiple templates already
-            vecs = [ _to_unit_vec(np.array(v, dtype=np.float32)) for v in ref ]
+            vecs = [_to_unit_vec(np.array(v, dtype=np.float32)) for v in ref]
         else:
             # single template stored previously
-            vecs = [ _to_unit_vec(np.array(ref, dtype=np.float32)) ]
+            vecs = [_to_unit_vec(np.array(ref, dtype=np.float32))]
 
-        vecs = [v for v in vecs if v is not None and v.shape == probe.shape and np.all(np.isfinite(v))]
+        vecs = [
+            v
+            for v in vecs
+            if v is not None and v.shape == probe.shape and np.all(np.isfinite(v))
+        ]
         if not vecs:
             continue
 
