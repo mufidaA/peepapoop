@@ -1,0 +1,28 @@
+[project]
+name = "Peepapoop"
+version = "0.0.1"
+
+requires-python = ">=3.11"
+
+dependencies = [
+    "python-dotenv",
+    "openai",
+    "vosk",
+    "sounddevice",
+    "numpy>=2.3.3",
+    "pyaudio>=0.2.14",
+    "torchaudio>=2.8.0",
+    "speechbrain>=1.0.3",
+    "soundfile>=0.13.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black",
+    "isort",
+    "pylint",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
