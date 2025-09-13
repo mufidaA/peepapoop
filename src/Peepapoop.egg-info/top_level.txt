@@ -1,7 +1,0 @@
-__init__
-config
-enroll_voice
-speech_to_speech
-spells
-transcribe
-whos_voice
