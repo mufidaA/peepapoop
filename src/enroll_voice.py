@@ -1,6 +1,9 @@
-import json, numpy as np
+import json
 from pathlib import Path
-import torch, torchaudio
+
+import numpy as np
+import torch
+import torchaudio
 from speechbrain.inference import EncoderClassifier
 
 # load once
@@ -8,6 +11,11 @@ classifier = EncoderClassifier.from_hparams(
     source="speechbrain/spkrec-ecapa-voxceleb", run_opts={"device": "cpu"}
 )
 
+torch.amp.custom_fwd(device_type="cpu", cast_inputs=torch.float16)
+def fwd(x):
+    return x * 2
+
+wrapped_fwd = torch.amp.custom_fwd(fwd, device_type="cpu", cast_inputs=torch.float16)
 
 def _ensure_16k_mono(wav, sr):
     """Resample to 16kHz mono tensor (1, samples)."""

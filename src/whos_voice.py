@@ -1,9 +1,11 @@
-import json, numpy as np
+import json
 from pathlib import Path
+
+import numpy as np
 import torchaudio
 
-from src.enroll_voice import wav_to_embedding
 from src.config import logger
+from src.enroll_voice import wav_to_embedding
 
 
 def _to_unit_vec(x, eps=1e-9):

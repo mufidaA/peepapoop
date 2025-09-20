@@ -14,6 +14,14 @@ dependencies = [
     "torchaudio>=2.8.0",
     "speechbrain>=1.0.3",
     "soundfile>=0.13.1",
+    "speechrecognition>=3.14.3",
+    "langchain-openai>=0.3.33",
+    "langchain-postgres>=0.0.15",
+    "psycopg2-binary>=2.9.10",
+    "langchain>=0.3.27",
+    "fastapi>=0.116.1",
+    "uvicorn>=0.35.0",
+    "gunicorn>=23.0.0",
 ]
 
 [project.optional-dependencies]

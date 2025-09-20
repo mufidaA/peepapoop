@@ -1,130 +1,98 @@
-import io, queue, sys, wave
+import io
+import queue
+import sys
+import threading
+import wave
+from typing import Tuple
+
 import numpy as np
 import sounddevice as sd
 from openai import OpenAI
-from whos_voice import who_is_speaking
+
 from src.config import client, logger
+from whos_voice import who_is_speaking
 
-MODEL = "gpt-4o-mini-transcribe"  # "gpt-4o-mini-transcribe"
-SAMPLERATE = 16_000
-CHANNELS = 1
-DTYPE = "int16"
-BLOCKSIZE = 8000  # 0.5s @16kHz
-
-audio_q = queue.Queue(maxsize=40)
-chunks = []
-
-import asyncio
-import time
+MODEL = "gpt-4o-mini-transcribe"
 
 
-def audio_callback(indata, frames, time, status):
-    if status:
-        logger.info(status, file=sys.stderr)
-    try:
-        audio_q.put_nowait(bytes(indata))
-    except queue.Full:
-        _ = audio_q.get_nowait()
-        audio_q.put_nowait(bytes(indata))
 
-
-def rms_db(audio_bytes):
-    # int16 -> float32 to avoid overflow on square
-    x = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
-
-    if x.size == 0:
-        return -np.inf
-
-    # dBFS: normalize to full-scale (32768 for int16)
-    x /= 32768.0
-
-    # RMS in float, safe from overflow
-    rms = np.sqrt(np.mean(x * x))  # or np.sqrt(np.mean(np.square(x)))
-
-    # Guard against exact silence
-    if not np.isfinite(rms) or rms <= 0.0:
-        return -np.inf
-
-    return 20.0 * np.log10(rms)
-
-
-def record_until_silence(
-    silence_db_threshold: float,
-    silence_seconds: float,
-    max_record_seconds: float,
-) -> io.BytesIO | None:
+def transcribe_with_identify(wav_bytes: bytes) -> Tuple[str, str]:
     """
-    Collects audio blocks until `silence_seconds` of continuous silence below
-    `silence_db_threshold` is observed, or until `max_record_seconds` if given.
-    Returns an in-memory WAV (or None if nothing captured).
+    Accepts raw WAV bytes, identifies the speaker, and transcribes the audio
+    in parallel threads.
+
+    Returns:
+        (f"{speaker_id} said: ", transcript_text)
+
+    Raises:
+        TypeError: if wav_bytes is not bytes/bytearray
+        ValueError: if the payload doesn't look like a WAV file
+        Any exception raised by who_is_speaking or the transcription client
     """
-    chunks: list[bytes] = []
-    silence_start = None
-    start_time = time.time()
 
-    try:
-        while True:
-            audio_q.get_nowait()
-    except queue.Empty:
-        pass
+    if not isinstance(wav_bytes, (bytes, bytearray)):
+        raise TypeError("transcribe_with_identify expects WAV bytes")
 
-    with sd.RawInputStream(
-        samplerate=SAMPLERATE,
-        blocksize=BLOCKSIZE,
-        dtype=DTYPE,
-        channels=CHANNELS,
-        callback=audio_callback,
-    ):
-        while True:
-            audio_bytes = audio_q.get()
-            chunks.append(audio_bytes)
+    # Minimal RIFF/WAVE sanity check
+    if len(wav_bytes) < 12 or wav_bytes[:4] != b"RIFF" or wav_bytes[8:12] != b"WAVE":
+        raise ValueError("Provided data does not appear to be a valid WAV file")
 
-            db = rms_db(audio_bytes)
+    # Independent buffers for each worker to avoid pointer contention
+    stt_buf = io.BytesIO(wav_bytes)
+    stt_buf.name = "speech.wav"
+    stt_buf.seek(0)
 
-            if db < silence_db_threshold:
-                if silence_start is None:
-                    silence_start = time.time()
-                elif time.time() - silence_start >= silence_seconds:
-                    break
-            else:
-                silence_start = None
+    spk_buf = io.BytesIO(wav_bytes)
+    spk_buf.name = "speech.wav"
+    spk_buf.seek(0)
 
-            if (
-                max_record_seconds is not None
-                and (time.time() - start_time) >= max_record_seconds
-            ):
-                break
+    # Shared result/exception holders
+    results = {"speaker": None, "text": None}
+    errors = {"speaker": None, "stt": None}
 
-        if not chunks or all(rms_db(c) < silence_db_threshold for c in chunks):
-            logger.info("returning None")
-            return None
+    def speaker_worker():
+        try:
+            speaker_dict = who_is_speaking(spk_buf)
+            logger.info("Speaker ID result: %s", speaker_dict)
+            results["speaker"] = speaker_dict
+        except Exception as e:  # propagate later
+            errors["speaker"] = e
 
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as wf:
-        wf.setnchannels(CHANNELS)
-        wf.setsampwidth(np.dtype(DTYPE).itemsize)
-        wf.setframerate(SAMPLERATE)
-        wf.writeframes(b"".join(chunks))
-    buf.seek(0)
-    buf.name = "mic.wav"
-    logger.info("returning buff")
-    return buf
+    def stt_worker():
+        try:
+            # Ensure buffer is at start in case client reads from current offset
+            stt_buf.seek(0)
+            txt = client.audio.transcriptions.create(
+                model=MODEL,           # e.g., "whisper-1" or "gpt-4o-transcribe"
+                file=stt_buf,          # file-like; .name is set above
+                response_format="text" # Whisper-style plain string
+            )
+            logger.info("Transcribed: %s", txt)
+            results["text"] = txt
+        except Exception as e:
+            errors["stt"] = e
 
+    t_speaker = threading.Thread(target=speaker_worker, name="speaker-identify", daemon=True)
+    t_stt = threading.Thread(target=stt_worker, name="speech-to-text", daemon=True)
 
-def transcribe_with_identify(buf) -> tuple:
+    # Kick off both in parallel
+    t_speaker.start()
+    t_stt.start()
 
-    speaker_dict = who_is_speaking(buf)
-    logger.info(speaker_dict)
-    logger.info(speaker_dict)
+    # Wait for both to finish
+    t_speaker.join()
+    t_stt.join()
 
-    txt = client.audio.transcriptions.create(
-        model=MODEL,
-        file=buf,
-        response_format="text",  # or "json"
-    )
-    logger.info("Transcribed %s", txt)
-    logger.info("Transcribed %s", txt)
-    return (
-        f"{speaker_dict["speaker_id"]} said: ",
-        txt,
-    )  # tx is a string when response_format="text"
+    # If either thread failed, raise the first encountered error
+    if errors["speaker"]:
+        raise errors["speaker"]
+    if errors["stt"]:
+        raise errors["stt"]
+
+    # Compose result
+    speaker_dict = results["speaker"] or {}
+    speaker_id = speaker_dict.get("speaker_id", "Someone")
+    identity_prefix = f"{speaker_id} said: "
+    transcript_text = results["text"] or ""
+
+    return identity_prefix, transcript_text

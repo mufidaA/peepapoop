@@ -1,7 +1,8 @@
-from config import client, logger
 import json
+
 import numpy as np
 
+from config import client, logger
 
 OPENAI_ENGINE = "text-embedding-3-small"
 
